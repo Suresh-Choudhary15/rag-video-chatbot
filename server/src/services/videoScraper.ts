@@ -2,6 +2,7 @@ import ytDlp from "yt-dlp-exec";
 import { YoutubeTranscript } from "youtube-transcript";
 import path from "path";
 import fs from "fs";
+import { transcribeAndClean } from "./transcription";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -141,20 +142,29 @@ function ensureTempDir(): void {
   }
 }
 
+function findDownloadedFile(dir: string, outputId: string): string {
+  // yt-dlp uses %(ext)s so we find whatever extension it chose
+  const files = fs.readdirSync(dir).filter((f) => f.startsWith(outputId));
+  if (files.length === 0) {
+    throw new VideoScraperError(
+      `No downloaded file found for ID: ${outputId} in ${dir}`,
+    );
+  }
+  return path.join(dir, files[0]);
+}
+
 async function downloadAudio(url: string, outputId: string): Promise<string> {
   ensureTempDir();
-  const outputPath = path.join(TEMP_DIR, `${outputId}.m4a`);
-
-  if (fs.existsSync(outputPath)) {
-    console.log(`[scraper] Cache hit: ${outputPath}`);
-    return outputPath;
+  // / Check cache — any file starting with this ID
+  const existing = fs.readdirSync(TEMP_DIR).find((f) => f.startsWith(outputId));
+  if (existing) {
+    console.log(`[scraper] Cache hit: ${path.join(TEMP_DIR, existing)}`);
+    return path.join(TEMP_DIR, existing);
   }
 
   try {
     await ytDlp(url, {
-      extractAudio: true,
-      audioFormat: "m4a",
-      audioQuality: 5,
+      format: "bestaudio[ext=m4a]/bestaudio/best",
       output: path.join(TEMP_DIR, `${outputId}.%(ext)s`),
       noWarnings: true,
     });
@@ -162,15 +172,7 @@ async function downloadAudio(url: string, outputId: string): Promise<string> {
     throw new VideoScraperError(`Audio download failed for ${url}`, err, url);
   }
 
-  if (!fs.existsSync(outputPath)) {
-    throw new VideoScraperError(
-      `Audio file not found after download: ${outputPath}`,
-      undefined,
-      url,
-    );
-  }
-
-  return outputPath;
+  return findDownloadedFile(TEMP_DIR, outputId);
 }
 
 // ── YouTube ───────────────────────────────────────────────────────────────────
@@ -311,10 +313,15 @@ export async function scrapeReel(url: string): Promise<ReelData> {
   // audioPath handed to transcription.ts — transcription happens there
   metadata.audioPath = audioPath;
 
+  // Transcribe audio and delete file — transcription.ts handles cleanup
+  const transcriptText = await transcribeAndClean(audioPath);
+
+  metadata.audioPath = null; // file is gone after transcription
+
   return {
     metadata,
     audioPath,
-    transcriptText: "", // filled after transcription
+    transcriptText,
     scrapedAt: new Date().toISOString(),
   };
 }
