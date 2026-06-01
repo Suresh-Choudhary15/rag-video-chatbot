@@ -141,12 +141,9 @@ function ensureTempDir(): void {
   }
 }
 
-async function downloadAudioMp3(
-  url: string,
-  outputId: string,
-): Promise<string> {
+async function downloadAudio(url: string, outputId: string): Promise<string> {
   ensureTempDir();
-  const outputPath = path.join(TEMP_DIR, `${outputId}.mp3`);
+  const outputPath = path.join(TEMP_DIR, `${outputId}.m4a`);
 
   if (fs.existsSync(outputPath)) {
     console.log(`[scraper] Cache hit: ${outputPath}`);
@@ -156,7 +153,7 @@ async function downloadAudioMp3(
   try {
     await ytDlp(url, {
       extractAudio: true,
-      audioFormat: "mp3",
+      audioFormat: "m4a",
       audioQuality: 5,
       output: path.join(TEMP_DIR, `${outputId}.%(ext)s`),
       noWarnings: true,
@@ -308,7 +305,7 @@ export async function scrapeReel(url: string): Promise<ReelData> {
 
   const [metadata, audioPath] = await Promise.all([
     fetchReelMetadata(trimmedUrl),
-    downloadAudioMp3(trimmedUrl, extractReelId(trimmedUrl)),
+    downloadAudio(trimmedUrl, extractReelId(trimmedUrl)),
   ]);
 
   // audioPath handed to transcription.ts — transcription happens there
