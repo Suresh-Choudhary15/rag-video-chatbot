@@ -3,7 +3,11 @@ import { pipeline } from "@huggingface/transformers";
 import { Document } from "@langchain/core/documents";
 import { ChromaClient, Collection } from "chromadb";
 import { ChatGroq } from "@langchain/groq";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
+import {
+  ChatPromptTemplate,
+  MessagesPlaceholder,
+} from "@langchain/core/prompts";
+import { HumanMessage, AIMessage, BaseMessage } from "@langchain/core/messages";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import {
   RunnableSequence,
@@ -39,10 +43,16 @@ export interface EmbeddedChunk {
   embedding: number[];
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface RAGQueryOptions {
   query: string;
   storeLabel: StoreLabel;
   topK?: number;
+  history?: ChatMessage[];
 }
 
 export interface RAGSource {
@@ -445,8 +455,17 @@ function extractSources(docs: Document<ChunkMetadata>[]): RAGSource[] {
 
 // ── RAG query ─────────────────────────────────────────────────────────────────
 
+// Converts frontend {role, content} array to LangChain BaseMessage[]
+function toBaseMessages(history: ChatMessage[]): BaseMessage[] {
+  return history.map((msg) =>
+    msg.role === "user"
+      ? new HumanMessage(msg.content)
+      : new AIMessage(msg.content),
+  );
+}
+
 export async function queryRAG(options: RAGQueryOptions): Promise<RAGResponse> {
-  const { query, storeLabel, topK = 4 } = options;
+  const { query, storeLabel, topK = 4, history = [] } = options;
   if (!query.trim()) throw new Error("Query must not be empty.");
 
   const queryEmbedding = await embedText(query);
@@ -459,6 +478,7 @@ export async function queryRAG(options: RAGQueryOptions): Promise<RAGResponse> {
 
   const prompt = ChatPromptTemplate.fromMessages([
     ["system", SYSTEM_PROMPT],
+    new MessagesPlaceholder("history"), // ← history injected here
     ["human", HUMAN_PROMPT],
   ]);
 
@@ -466,13 +486,18 @@ export async function queryRAG(options: RAGQueryOptions): Promise<RAGResponse> {
     RunnablePassthrough.assign({
       context: () => context,
       query: () => query,
+      history: () => toBaseMessages(history),
     }),
     prompt,
     getLLM(),
     new StringOutputParser(),
   ]);
 
-  const answer = await chain.invoke({ context, query });
+  const answer = await chain.invoke({
+    context,
+    query,
+    history: toBaseMessages(history),
+  });
 
   return {
     answer,
@@ -487,7 +512,7 @@ export async function queryRAGStream(options: RAGQueryOptions): Promise<{
   sources: RAGSource[];
   retrievedChunks: number;
 }> {
-  const { query, storeLabel, topK = 4 } = options;
+  const { query, storeLabel, topK = 4, history = [] } = options;
   if (!query.trim()) throw new Error("Query must not be empty.");
 
   const queryEmbedding = await embedText(query);
@@ -500,6 +525,7 @@ export async function queryRAGStream(options: RAGQueryOptions): Promise<{
 
   const prompt = ChatPromptTemplate.fromMessages([
     ["system", SYSTEM_PROMPT],
+    new MessagesPlaceholder("history"), // same pattern
     ["human", HUMAN_PROMPT],
   ]);
 
@@ -507,13 +533,18 @@ export async function queryRAGStream(options: RAGQueryOptions): Promise<{
     RunnablePassthrough.assign({
       context: () => context,
       query: () => query,
+      history: () => toBaseMessages(history),
     }),
     prompt,
     getLLM(),
     new StringOutputParser(),
   ]);
 
-  const stream = await chain.stream({ context, query });
+  const stream = await chain.stream({
+    context,
+    query,
+    history: toBaseMessages(history),
+  });
 
   return {
     stream,
