@@ -45,7 +45,7 @@ app.get(
     let chromaStatus = "ok";
     try {
       const r = await fetch(
-        `${process.env.CHROMA_URL ?? "http://localhost:8000"}/api/v1/heartbeat`,
+        `${process.env.CHROMA_URL ?? "http://localhost:8000"}/api/v2/heartbeat`,
       );
       if (!r.ok) chromaStatus = "unreachable";
     } catch {
