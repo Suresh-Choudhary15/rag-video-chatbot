@@ -1,122 +1,170 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useState } from "react";
+import VideoCard from "./components/VideoCard";
+import type { VideoInfo, AppStatus } from "./types";
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const [urlA, setUrlA] = useState("");
+  const [urlB, setUrlB] = useState("");
+  const [videoA, setVideoA] = useState<VideoInfo | null>(null);
+  const [videoB, setVideoB] = useState<VideoInfo | null>(null);
+  const [status, setStatus] = useState<AppStatus>("idle");
+  const [statusMessage, setStatusMessage] = useState("");
+
+  const isLoading = status === "scraping" || status === "ingesting";
+  const hasVideos = videoA !== null && videoB !== null;
+
+  function handleStatusEvent(data: Record<string, unknown>) {
+    if (data.status === "scraping") {
+      setStatus("scraping");
+      setStatusMessage("Scraping videos...");
+    } else if (data.status === "ingesting") {
+      setStatus("ingesting");
+      setStatusMessage("Building vector store...");
+    } else if (data.status === "thinking") {
+      setStatus("thinking");
+      setStatusMessage("Generating answer...");
+    }
+  }
+
+  async function handleSubmit() {
+    if (!urlA.trim() || !urlB.trim()) return;
+    setStatus("scraping");
+    setStatusMessage("Scraping videos...");
+    setVideoA(null);
+    setVideoB(null);
+
+    try {
+      const response = await fetch("http://localhost:3001/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: "Give me a brief overview of both videos.",
+          urlA: urlA.trim(),
+          urlB: urlB.trim(),
+        }),
+      });
+
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            handleStatusEvent(data);
+            if (data.done) {
+              if (data.videoA) setVideoA(data.videoA);
+              if (data.videoB) setVideoB(data.videoB);
+              setStatus("ready");
+              setStatusMessage("");
+            }
+          } catch {
+            // ignore malformed lines
+          }
+        }
+      }
+    } catch (err) {
+      setStatus("error");
+      setStatusMessage(
+        err instanceof Error ? err.message : "Something went wrong",
+      );
+    }
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="max-w-4xl mx-auto">
+          <h1 className="text-xl font-bold text-gray-900">
+            Video Comparison RAG
+          </h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Compare two social media videos with AI
           </p>
         </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+      </header>
 
-      <div className="ticks"></div>
+      <main className="max-w-4xl mx-auto px-6 py-8">
+        {/* URL inputs */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm mb-6">
+          <h2 className="text-sm font-semibold text-gray-700 mb-4">
+            Enter video URLs
+          </h2>
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-2">
+              <span className="flex items-center justify-center w-8 h-10 rounded-lg bg-indigo-100 text-indigo-700 font-bold text-sm flex-shrink-0">
+                A
+              </span>
+              <input
+                type="url"
+                placeholder="YouTube or Instagram URL"
+                value={urlA}
+                onChange={(e) => setUrlA(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                disabled={isLoading}
+              />
+            </div>
+            <div className="flex gap-2">
+              <span className="flex items-center justify-center w-8 h-10 rounded-lg bg-purple-100 text-purple-700 font-bold text-sm flex-shrink-0">
+                B
+              </span>
+              <input
+                type="url"
+                placeholder="YouTube or Instagram URL"
+                value={urlB}
+                onChange={(e) => setUrlB(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                disabled={isLoading}
+              />
+            </div>
+          </div>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          <button
+            onClick={handleSubmit}
+            disabled={isLoading || !urlA.trim() || !urlB.trim()}
+            className="mt-4 w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            {isLoading ? statusMessage : "Load & Compare Videos"}
+          </button>
+
+          {/* Status indicator */}
+          {isLoading && (
+            <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
+              <div className="w-3 h-3 rounded-full bg-indigo-400 animate-pulse" />
+              {statusMessage} — this may take 30–60 seconds on first load
+            </div>
+          )}
+
+          {status === "error" && (
+            <p className="mt-3 text-xs text-red-600">{statusMessage}</p>
+          )}
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        {/* Video cards */}
+        <div className="flex gap-4">
+          <VideoCard label="A" video={videoA} isLoading={isLoading} />
+          <VideoCard label="B" video={videoB} isLoading={isLoading} />
+        </div>
+
+        {/* Ready state hint */}
+        {hasVideos && status === "ready" && (
+          <p className="text-center text-sm text-gray-500 mt-6">
+            ✅ Videos loaded — chat interface coming next
+          </p>
+        )}
+      </main>
+    </div>
+  );
 }
-
-export default App
