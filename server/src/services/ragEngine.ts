@@ -410,6 +410,11 @@ CITATION RULES (mandatory):
 - Compare both videos explicitly when both are relevant
 - Include engagement metrics when relevant to the question
 
+SPARSE CONTENT RULE:
+If one video has limited transcript content, still use its metadata
+(engagement rate, views, likes) to answer comparison questions.
+Never say a video is unavailable if its metadata is in the context.
+
 ENGAGEMENT RATE = (likes + comments) / views × 100
 Use pre-computed values from metadata — never estimate.
 
@@ -420,17 +425,36 @@ FORMAT: Clear prose, under 300 words, end with one actionable insight.`;
 const HUMAN_PROMPT = `Context:\n{context}\n\nQuestion: {query}`;
 
 function formatContext(docs: Document<ChunkMetadata>[]): string {
-  return docs
+  // Build a metadata summary for each unique video in the results
+  const videoMap = new Map<string, ChunkMetadata>();
+  for (const doc of docs) {
+    if (!videoMap.has(doc.metadata.videoLabel)) {
+      videoMap.set(doc.metadata.videoLabel, doc.metadata);
+    }
+  }
+
+  // Header — always shows both videos if present
+  const header = Array.from(videoMap.values())
+    .sort((a, b) => a.videoLabel.localeCompare(b.videoLabel))
+    .map((m) => {
+      const rate =
+        m.engagementRate !== null
+          ? `${m.engagementRate.toFixed(2)}%`
+          : "N/A (stats hidden)";
+      return `VIDEO ${m.videoLabel}: "${m.title}" by ${m.uploaderName} | Platform: ${m.platform} | Views: ${m.viewCount.toLocaleString()} | Likes: ${m.likeCount.toLocaleString()} | Comments: ${m.commentCount.toLocaleString()} | Engagement Rate: ${rate}`;
+    })
+    .join("\n");
+
+  // Chunks
+  const chunks = docs
     .map((doc, i) => {
       const m = doc.metadata;
-      const rate =
-        m.engagementRate !== null ? `${m.engagementRate.toFixed(2)}%` : "N/A";
-      return `--- Source ${i + 1}: Video ${m.videoLabel} ---
-Title: ${m.title} | Creator: ${m.uploaderName} | Platform: ${m.platform}
-Views: ${m.viewCount.toLocaleString()} | Likes: ${m.likeCount.toLocaleString()} | Comments: ${m.commentCount.toLocaleString()} | Engagement: ${rate}
-Chunk ${m.chunkIndex + 1}/${m.totalChunks}: "${doc.pageContent}"`;
+      return `--- Chunk ${i + 1}: Video ${m.videoLabel} (${m.title}) ---
+"${doc.pageContent}"`;
     })
     .join("\n\n");
+
+  return `VIDEOS IN CONTEXT:\n${header}\n\nRELEVANT TRANSCRIPT CHUNKS:\n${chunks}`;
 }
 
 function extractSources(docs: Document<ChunkMetadata>[]): RAGSource[] {
@@ -464,14 +488,47 @@ function toBaseMessages(history: ChatMessage[]): BaseMessage[] {
   );
 }
 
+/**
+ * Grab results from both video stores instead of relying on
+ * a single combined search. This gave more consistent results
+ * when asking comparison questions between the two videos.
+ */
+async function balancedRetrieval(
+  query: string,
+  queryEmbedding: number[],
+  storeLabel: StoreLabel,
+  topK: number,
+): Promise<Document<ChunkMetadata>[]> {
+  // Single video query — use that store directly
+  if (storeLabel === "A" || storeLabel === "B") {
+    return similaritySearch(storeLabel, queryEmbedding, topK);
+  }
+
+  // Combined query — fetch from each store separately
+  const perVideo = Math.max(2, Math.floor(topK / 2));
+
+  try {
+    const [docsA, docsB] = await Promise.all([
+      similaritySearch("A", queryEmbedding, perVideo),
+      similaritySearch("B", queryEmbedding, perVideo),
+    ]);
+    // Interleave A and B results
+    return [...docsA, ...docsB];
+  } catch {
+    // Fall back to combined if individual stores don't exist
+    return similaritySearch("combined", queryEmbedding, topK);
+  }
+}
+
 export async function queryRAG(options: RAGQueryOptions): Promise<RAGResponse> {
   const { query, storeLabel, topK = 4, history = [] } = options;
   if (!query.trim()) throw new Error("Query must not be empty.");
 
   const queryEmbedding = await embedText(query);
-  const retrievedDocs = await similaritySearch(
-    storeLabel,
+  const retrievedDocs = await balancedRetrieval(
+    query,
     queryEmbedding,
+    storeLabel,
     topK,
   );
   const context = formatContext(retrievedDocs);
@@ -516,9 +573,10 @@ export async function queryRAGStream(options: RAGQueryOptions): Promise<{
   if (!query.trim()) throw new Error("Query must not be empty.");
 
   const queryEmbedding = await embedText(query);
-  const retrievedDocs = await similaritySearch(
-    storeLabel,
+  const retrievedDocs = await balancedRetrieval(
+    query,
     queryEmbedding,
+    storeLabel,
     topK,
   );
   const context = formatContext(retrievedDocs);
