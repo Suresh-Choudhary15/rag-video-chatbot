@@ -1,6 +1,7 @@
 import { useState } from "react";
 import VideoCard from "./components/VideoCard";
 import type { VideoInfo, AppStatus } from "./types";
+import ChatInterface from "./components/ChatInterface";
 
 export default function App() {
   const [urlA, setUrlA] = useState("");
@@ -158,11 +159,11 @@ export default function App() {
           <VideoCard label="B" video={videoB} isLoading={isLoading} />
         </div>
 
-        {/* Ready state hint */}
+        {/* Chat interface - shows after videos are loaded */}
         {hasVideos && status === "ready" && (
-          <p className="text-center text-sm text-gray-500 mt-6">
-            ✅ Videos loaded — chat interface coming next
-          </p>
+          <div className="mt-6">
+            <ChatInterface urlA={urlA} urlB={urlB} />
+          </div>
         )}
       </main>
     </div>
